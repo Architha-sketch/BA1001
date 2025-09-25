@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Banking Patterns — Observer • Strategy • Command</title>
+  <style>
+    :root { --bg:#f4f7fb; --card:#fff; --muted:#6b7280; --primary:#0b5cff; --danger:#ff6b6b; }
+    body { font-family: Inter, system-ui, Arial; margin:18px; background:var(--bg); color:#0f172a; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    h1 { margin:0 0 6px 0; font-size:20px; }
+    .muted { color:var(--muted); font-size:13px; }
+    .grid { display:grid; grid-template-columns: 360px 1fr; gap:16px; margin-top:14px; }
+    .card { background:var(--card); border-radius:12px; padding:14px; box-shadow:0 8px 30px rgba(15,23,42,0.06); }
+    label { display:block; margin-top:8px; font-size:13px; color:#111827; }
+    input, select { width:100%; padding:8px 10px; margin-top:6px; border-radius:8px; border:1px solid #e6e9f2; box-sizing:border-box; }
+    button { padding:8px 12px; border-radius:10px; border:0; background:var(--primary); color:white; cursor:pointer; margin-top:8px; }
+    button.danger { background:var(--danger); }
+    .row { display:flex; gap:8px; align-items:center; }
+    .accounts-list { margin-top:12px; }
+    .account-row { display:flex; justify-content:space-between; align-items:center; padding:10px; border-radius:8px; background:#fbfdff; margin-bottom:8px; border:1px solid #eef2ff; }
+    .notifications { height:220px; overflow:auto; margin-top:8px; border-radius:8px; border:1px dashed #e6e9f0; padding:10px; background:#fbfdff; }
+    .small { font-size:12px; color:var(--muted); }
+    footer { margin-top:12px; font-size:13px; color:#374151; }
+    .badge { background:#eff6ff; color:#034ea2; padding:6px 10px; border-radius:999px; font-size:12px; }
+    .controls { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+    .flex-col { display:flex; flex-direction:column; gap:8px; }
+    .flex-between { display:flex; justify-content:space-between; align-items:center; }
+    @media (max-width:880px){ .grid{ grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Banking Patterns</h1>
+      <div class="muted">Observer (notifications) • Strategy (interest) • Command (transactions + undo)</div>
+    </div>
+    <div class="badge">Single-file demo</div>
+  </header>
+
+  <section class="grid">
+    <!-- Left column: customers & accounts -->
+    <div class="card">
+      <h3>Customers</h3>
+      <label>Customer name
+        <input id="custName" placeholder="e.g. karthi" />
+      </label>
+      <div class="row">
+        <button id="addCustBtn">Add Customer</button>
+        <button id="seedBtn" style="background:#10b981">See Demo</button>
+      </div>
+      <div id="customersList" style="margin-top:12px;"></div>
+
+      <hr style="margin:12px 0;" />
+
+      <h3>Create Account</h3>
+      <label>Account type
+        <select id="acctType">
+          <option value="savings">Savings</option>
+          <option value="current">Current</option>
+          <option value="fixed">Fixed Deposit</option>
+        </select>
+      </label>
+      <label>Owner
+        <select id="ownerSelect"></select>
+      </label>
+      <label>Initial balance
+        <input id="initBalance" type="number" value="1000" />
+      </label>
+      <button id="createAcctBtn">Create Account</button>
+
+      <div style="margin-top:12px;">
+        <strong>Accounts</strong>
+        <div id="accountsList" class="accounts-list"></div>
+      </div>
+    </div>
+
+    <!-- Right column: transactions, strategies, notifications -->
+    <div class="card">
+      <h3>Transactions & Interest</h3>
+
+      <div class="row" style="align-items:flex-end;">
+        <div style="flex:1">
+          <label>Select account
+            <select id="selectAccount"></select>
+          </label>
+        </div>
+        <div style="width:140px">
+          <label>Amount
+            <input id="amount" type="number" value="100" />
+          </label>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="depositBtn">Deposit</button>
+        <button id="withdrawBtn">Withdraw</button>
+        <button id="transferBtn">Transfer</button>
+        <button id="undoBtn" class="danger">Undo</button>
+      </div>
+
+      <label style="margin-top:10px;">Transfer target
+        <select id="transferTo"></select>
+      </label>
+
+      <hr style="margin:12px 0;" />
+
+      <h4>Interest Strategy (selected account)</h4>
+      <div class="row">
+        <label style="flex:1">Strategy
+          <select id="strategySelect">
+            <option value="savings">SavingsInterest (3%)</option>
+            <option value="fixed">FixedDepositInterest (7%)</option>
+            <option value="current">CurrentInterest (0%)</option>
+          </select>
+        </label>
+        <button id="applyStrategyBtn">Apply</button>
+      </div>
+      <div style="margin-top:8px;">
+        <strong>Calculated interest:</strong> <span id="interestValue">—</span>
+      </div>
+
+      <hr style="margin:12px 0;" />
+
+      <h4>Notifications</h4>
+      <div class="notifications" id="notifications"></div>
+
+      <footer>
+        <div class="small">Notes: Account is the subject (observer pattern). Interest strategies are swapped at runtime (strategy pattern). Transactions are commands recorded in a history that can be undone (command pattern).</div>
+      </footer>
+    </div>
+  </section>
+
+  <script>
+  /***********************
+   * Banking Patterns Demo
+   * - Observer: account notifies customer observers
+   * - Strategy: interest calculation strategies
+   * - Command: deposit/withdraw/transfer as commands with undo
+   ***********************/
+
+  // ---------------------------
+  // Observer: Customer notifier
+  // ---------------------------
+  class Customer {
+    constructor(name) { this.name = name; }
+    update(message) {
+      UI.notify(`[${this.name}] ${message}`);
+    }
+  }
+
+  // ---------------------------
+  // Strategy: Interest strategies
+  // ---------------------------
+  class InterestStrategy {
+    calculate(balance) { throw new Error('Implement calculate'); }
+  }
+  class SavingsInterest extends InterestStrategy {
+    calculate(balance) { return balance * 0.03; }
+  }
+  class FixedDepositInterest extends InterestStrategy {
+    calculate(balance) { return balance * 0.07; }
+  }
+  class CurrentInterest extends InterestStrategy {
+    calculate(balance) { return 0; }
+  }
+
+  // ---------------------------
+  // Account (Subject) - Encapsulates balance + observers
+  // ---------------------------
+  let accountIdSeq = 1;
+  class Account {
+    constructor(owner, initialBalance=0) {
+      this.id = accountIdSeq++;
+      this.owner = owner; // Customer instance
+      this._balance = Number(initialBalance) || 0;
+      this.observers = []; // Customer observers (could be same as owner or diff)
+      this.interestStrategy = new CurrentInterest();
+      this.typeName = 'Generic';
+    }
+    getBalance() { return this._balance; }
+    attach(observer) {
+      if (!this.observers.includes(observer)) this.observers.push(observer);
+    }
+    detach(observer) {
+      this.observers = this.observers.filter(o => o !== observer);
+    }
+    notify(message) {
+      this.observers.forEach(o => o.update(`Acct#${this.id} (${this.typeName}): ${message}`));
+    }
+    // Encapsulated methods to change balance
+    updateBalance(delta, reason='') {
+      this._balance += Number(delta);
+      this.notify(`${reason} ${delta>=0?'+':''}${delta}. New balance: ₹${this._balance.toFixed(2)}`);
+    }
+    setInterestStrategy(strategy) { this.interestStrategy = strategy; }
+    calculateInterest() { return this.interestStrategy.calculate(this._balance); }
+    toString() {
+      return `Acct#${this.id} (${this.typeName}) — ${this.owner.name} — ₹${this._balance.toFixed(2)}`;
+    }
+  }
+
+  // Concrete accounts
+  class SavingsAccount extends Account {
+    constructor(owner, initial) { super(owner, initial); this.typeName='Savings'; this.setInterestStrategy(new SavingsInterest()); }
+  }
+  class CurrentAccount extends Account {
+    constructor(owner, initial) { super(owner, initial); this.typeName='Current'; this.setInterestStrategy(new CurrentInterest()); }
+  }
+  class FixedDepositAccount extends Account {
+    constructor(owner, initial) { super(owner, initial); this.typeName='FixedDeposit'; this.setInterestStrategy(new FixedDepositInterest()); }
+  }
+
+  // ---------------------------
+  // Command Pattern
+  // ---------------------------
+  class Command {
+    execute() { throw new Error('execute'); }
+    undo() { throw new Error('undo'); }
+  }
+
+  class DepositCommand extends Command {
+    constructor(account, amount) { super(); this.account = account; this.amount = Number(amount); }
+    execute() { this.account.updateBalance(this.amount, 'Deposit'); }
+    undo() { this.account.updateBalance(-this.amount, 'Undo Deposit'); }
+  }
+
+  class WithdrawCommand extends Command {
+    constructor(account, amount) { super(); this.account = account; this.amount = Number(amount); }
+    execute() {
+      if (this.account.getBalance() < this.amount) {
+        UI.notify(`Withdraw failed: insufficient funds on Acct#${this.account.id}`);
+        return;
+      }
+      this.account.updateBalance(-this.amount, 'Withdraw');
+    }
+    undo() { this.account.updateBalance(this.amount, 'Undo Withdraw'); }
+  }
+
+  class TransferCommand extends Command {
+    constructor(fromAcct, toAcct, amount) { super(); this.from = fromAcct; this.to = toAcct; this.amount = Number(amount); }
+    execute() {
+      if (this.from.getBalance() < this.amount) {
+        UI.notify(`Transfer failed: insufficient funds on Acct#${this.from.id}`);
+        return;
+      }
+      this.from.updateBalance(-this.amount, `Transfer -> Acct#${this.to.id}`);
+      this.to.updateBalance(this.amount, `Transfer <- Acct#${this.from.id}`);
+    }
+    undo() {
+      this.from.updateBalance(this.amount, `Undo Transfer from Acct#${this.from.id}`);
+      this.to.updateBalance(-this.amount, `Undo Transfer to Acct#${this.to.id}`);
+    }
+  }
+
+  // Invoker
+  class TransactionManager {
+    constructor() { this.history = []; }
+    executeCommand(cmd) {
+      cmd.execute();
+      // push command to history for undo; robust systems should check success
+      this.history.push(cmd);
+    }
+    undoLast() {
+      if (this.history.length === 0) { UI.notify('Nothing to undo'); return; }
+      const last = this.history.pop();
+      last.undo();
+    }
+  }
+
+  // ---------------------------
+  // UI utilities
+  // ---------------------------
+  const UI = (() => {
+    const custListEl = document.getElementById('customersList');
+    const accountsListEl = document.getElementById('accountsList');
+    const selectAccountEl = document.getElementById('selectAccount');
+    const transferToEl = document.getElementById('transferTo');
+    const ownerSelectEl = document.getElementById('ownerSelect');
+    const notificationsEl = document.getElementById('notifications');
+    const interestValueEl = document.getElementById('interestValue');
+
+    function renderCustomers(customers) {
+      if (!customers.length) custListEl.innerHTML = '<div class="small muted">No customers yet</div>';
+      else custListEl.innerHTML = customers.map(c => `<div class="small" style="padding:6px 8px;border-radius:6px;background:#fbfdff;margin-bottom:6px;border:1px solid #eef2ff;">${c.name}</div>`).join('');
+      ownerSelectEl.innerHTML = customers.map((c,i) => `<option value="${i}">${c.name}</option>`).join('');
+    }
+
+    function renderAccounts(accounts) {
+      if (!accounts.length) accountsListEl.innerHTML = '<div class="small muted">No accounts</div>';
+      else accountsListEl.innerHTML = accounts.map(a => `
+        <div class="account-row">
+          <div>
+            <div style="font-weight:600">${a.typeName} — Acct#${a.id}</div>
+            <div class="small">${a.owner.name} • ₹${a.getBalance().toFixed(2)}</div>
+          </div>
+          <div class="small">Interest: ₹${a.calculateInterest().toFixed(2)}</div>
+        </div>
+      `).join('');
+      const opts = accounts.map(a => `<option value="${a.id}">Acct#${a.id} (${a.typeName}) - ${a.owner.name} - ₹${a.getBalance().toFixed(2)}</option>`).join('');
+      selectAccountEl.innerHTML = opts;
+      transferToEl.innerHTML = opts;
+    }
+
+    function notify(msg) {
+      const time = (new Date()).toLocaleTimeString();
+      notificationsEl.insertAdjacentHTML('afterbegin', `<div style="margin-bottom:8px"><small class="small muted">${time}</small> — ${msg}</div>`);
+    }
+
+    function setInterestText(val) {
+      interestValueEl.innerText = `₹${(val||0).toFixed(2)}`;
+    }
+
+    return { renderCustomers, renderAccounts, notify, setInterestText };
+  })();
+
+  // ---------------------------
+  // App state & helpers
+  // ---------------------------
+  const App = (() => {
+    const customers = [];
+    const accounts = [];
+    const tm = new TransactionManager();
+
+    function addCustomer(name) {
+      const c = new Customer(name);
+      customers.push(c);
+      UI.renderCustomers(customers);
+      UI.notify(`Added customer ${name}`);
+      return c;
+    }
+
+    function createAccount(type, ownerIndex, initial) {
+      const owner = customers[ownerIndex];
+      if (!owner) { UI.notify('Select an owner'); return null; }
+      let acct;
+      switch(type) {
+        case 'savings': acct = new SavingsAccount(owner, initial); break;
+        case 'current': acct = new CurrentAccount(owner, initial); break;
+        case 'fixed': acct = new FixedDepositAccount(owner, initial); break;
+        default: acct = new Account(owner, initial);
+      }
+      // attach owner as observer by default
+      acct.attach(owner);
+      accounts.push(acct);
+      UI.renderAccounts(accounts);
+      UI.notify(`Created ${acct.typeName} Acct#${acct.id} for ${owner.name} with ₹${acct.getBalance().toFixed(2)}`);
+      return acct;
+    }
+
+    function findAccountById(id) {
+      return accounts.find(a => a.id === Number(id));
+    }
+
+    function deposit(accountId, amount) {
+      const acct = findAccountById(accountId);
+      if (!acct) { UI.notify('Select a valid account'); return; }
+      tm.executeCommand(new DepositCommand(acct, amount));
+      UI.renderAccounts(accounts);
+    }
+
+    function withdraw(accountId, amount) {
+      const acct = findAccountById(accountId);
+      if (!acct) { UI.notify('Select a valid account'); return; }
+      tm.executeCommand(new WithdrawCommand(acct, amount));
+      UI.renderAccounts(accounts);
+    }
+
+    function transfer(fromId, toId, amount) {
+      const from = findAccountById(fromId);
+      const to = findAccountById(toId);
+      if (!from || !to) { UI.notify('Select valid accounts'); return; }
+      if (from.id === to.id) { UI.notify('Cannot transfer to same account'); return; }
+      tm.executeCommand(new TransferCommand(from, to, amount));
+      UI.renderAccounts(accounts);
+    }
+
+    function undoLast() {
+      tm.undoLast();
+      UI.renderAccounts(accounts);
+    }
+
+    function applyStrategy(accountId, key) {
+      const acct = findAccountById(accountId);
+      if (!acct) { UI.notify('Select account to apply strategy'); return; }
+      switch(key) {
+        case 'savings': acct.setInterestStrategy(new SavingsInterest()); break;
+        case 'fixed': acct.setInterestStrategy(new FixedDepositInterest()); break;
+        case 'current': acct.setInterestStrategy(new CurrentInterest()); break;
+      }
+      UI.notify(`Applied ${key} strategy to Acct#${acct.id}`);
+      UI.renderAccounts(accounts);
+    }
+
+    function calcInterest(accountId) {
+      const acct = findAccountById(accountId);
+      if (!acct) { UI.notify('Select an account'); return 0; }
+      return acct.calculateInterest();
+    }
+
+    return {
+      addCustomer, createAccount, deposit, withdraw, transfer, undoLast, applyStrategy, calcInterest,
+      get customers() { return customers; }, get accounts() { return accounts; }
+    };
+  })();
+
+  // ---------------------------
+  // Wire UI
+  // ---------------------------
+  document.getElementById('addCustBtn').addEventListener('click', () => {
+    const name = document.getElementById('custName').value.trim();
+    if (!name) { UI.notify('Enter a customer name'); return; }
+    App.addCustomer(name);
+    document.getElementById('custName').value = '';
+    UI.renderCustomers(App.customers);
+    UI.renderAccounts(App.accounts);
+  });
+
+  document.getElementById('createAcctBtn').addEventListener('click', () => {
+    const type = document.getElementById('acctType').value;
+    const ownerIdx = Number(document.getElementById('ownerSelect').value);
+    const initial = Number(document.getElementById('initBalance').value) || 0;
+    App.createAccount(type, ownerIdx, initial);
+    UI.renderAccounts(App.accounts);
+  });
+
+  document.getElementById('depositBtn').addEventListener('click', () => {
+    const id = document.getElementById('selectAccount').value;
+    const amt = Number(document.getElementById('amount').value) || 0;
+    App.deposit(id, amt);
+  });
+
+  document.getElementById('withdrawBtn').addEventListener('click', () => {
+    const id = document.getElementById('selectAccount').value;
+    const amt = Number(document.getElementById('amount').value) || 0;
+    App.withdraw(id, amt);
+  });
+
+  document.getElementById('transferBtn').addEventListener('click', () => {
+    const from = document.getElementById('selectAccount').value;
+    const to = document.getElementById('transferTo').value;
+    const amt = Number(document.getElementById('amount').value) || 0;
+    App.transfer(from, to, amt);
+  });
+
+  document.getElementById('undoBtn').addEventListener('click', () => {
+    App.undoLast();
+  });
+
+  document.getElementById('applyStrategyBtn').addEventListener('click', () => {
+    const id = document.getElementById('selectAccount').value;
+    const key = document.getElementById('strategySelect').value;
+    App.applyStrategy(id, key);
+  });
+
+  document.getElementById('selectAccount').addEventListener('change', (e) => {
+    const id = e.target.value;
+    if (id) UI.setInterestText(App.calcInterest(id));
+  });
+
+  document.getElementById('seedBtn').addEventListener('click', () => {
+    // Seed demo data only if none exists
+    if (App.customers.length) { UI.notify('Demo already seeded'); return; }
+    App.addCustomer('Shivani');
+    App.addCustomer('Ravi');
+    App.createAccount('savings', 0, 1500);
+    App.createAccount('current', 1, 500);
+    UI.renderCustomers(App.customers);
+    UI.renderAccounts(App.accounts);
+  });
+
+  // initial render
+  UI.renderCustomers(App.customers);
+  UI.renderAccounts(App.accounts);
+
+  </script>
+</body>
+</html>
